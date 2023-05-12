@@ -1,0 +1,88 @@
+Class NCA.Python.hl7tofhir Extends Ens.BusinessProcess [ ClassType = persistent ]
+{
+
+Method OnRequest(pRequest As EnsLib.HL7.Message, Output pResponse As Ens.Response) [ Language = python ]
+{
+    import iris
+    import datetime
+    from fhir.resources.patient import Patient
+    from fhir.resources.humanname import HumanName
+    from fhir.resources.identifier import Identifier
+
+    def cls(cl=''):
+        return iris.cls(cl)
+    def trace(Input):
+        return cls('Ens.Util.Trace').WriteTrace("user", "NCA.Python.hl7tofhit", "OnRequest", Input)
+
+
+    status=trace("Start")
+
+    # Extract pt information from the message
+    patient = Patient()
+
+    # NHS Number / Local Code / OdsCode
+    Count = pRequest.GetValueAt("PID:3(*)")
+    status=trace("Count : " + str(Count))
+    
+    for i in range(1, Count+1):
+        if pRequest.GetValueAt("PID:3("+str(i)+").5")=="DN":
+        	LocalCode=pRequest.GetValueAt("PID:3("+str(i)+").1")
+        	status=trace(LocalCode)
+        if pRequest.GetValueAt("PID:3("+str(i)+").5")=="NHS":
+        	nhs_number=pRequest.GetValueAt("PID:3("+str(i)+").1")
+        	status=trace(nhs_number)
+
+    patient.identifier = [Identifier(value=nhs_number, system="nhs_number_sytem", use="official"),
+                            Identifier(value=LocalCode, system="Local_Code_sytem", use="official")]
+    # Extract patient name
+    name = HumanName()
+    name.family = pRequest.GetValueAt("PID:5.1")
+    name.given = [pRequest.GetValueAt("PID:5.2")]
+
+    # Extract patient gender
+    gender = pRequest.GetValueAt("PID:8")
+    if gender == "M":
+        patient.gender = "male"
+    elif gender == "F":
+        patient.gender = "female"
+
+    # Extract patient date of birth
+    dob = pRequest.GetValueAt("PID:7.1")
+    patient.birthDate = datetime.datetime.strptime(dob, '%Y%m%d').date()
+
+    # Extract patient address
+    patient.address = [{"line": [pRequest.GetValueAt("PID:11.1")]}]
+    patient.address.append({"line": [pRequest.GetValueAt("PID:11.2")]})
+    patient.address.append({"line": [pRequest.GetValueAt("PID:11.3")]})
+    patient.address.append({"postalCode": [pRequest.GetValueAt("PID:11.5")]})
+
+    # Extract patient phone number
+    patient.telecom = [{"system": "phone", "value": pRequest.GetValueAt("PID:13.1")}]
+    status = trace(patient.json())
+    status = trace(type(patient))
+    strmCont = cls('Ens.StreamContainer')._New()
+    strm = cls('%Stream.GblChrCompress')._New()
+    formatter = cls('%JSON.Formatter')._New()
+    strm = formatter.FormatToStream(patient.json())
+    status = trace("strm : " + str(patient.json()))
+    status = trace("helpstrmCont : " + str(help(strmCont)))
+    strmCont = str(patient.json())
+    strmCont
+
+    status = trace("strmCont : " + str(strmCont))
+
+    pResource = cls('Ens.StringContainer')._New()
+    pResource.StringValue = str(patient.json())
+    trace("pResource.StringValue : " + str(pResource.StringValue))
+    pResponse = cls('Ens.BusinessProcess').SendRequestAsync("ToCDR_Python", strmCont)
+    trace("pResponse: " + str(pResponse))
+
+    return pResource
+}
+
+Storage Default
+{
+<Type>%Storage.Persistent</Type>
+}
+
+}
